@@ -4,12 +4,19 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"log"
+	"os"
 	"time"
 )
+
+//TODO fix "``` Inline:false}]}" being included in our console output
+//TODO create a new logfile for each new sync
 
 var config Configuration
 var block cipher.Block
 var logger *log.Logger
+var prevLogFileName string
+var logFileName string
+var file *os.File
 
 func main() {
 	defer func() {
@@ -34,13 +41,13 @@ func main() {
 		handleError(err, "creating cypher")
 	}
 
-	//we run this first time only and then go over to a scheduled sync (every hour)
 	runSync()
 
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 
 	for range ticker.C {
+		initializeLogger()
 		runSync()
 	}
 }

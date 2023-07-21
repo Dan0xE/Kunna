@@ -17,8 +17,6 @@ import (
 
 const discordCharLimit = 1024
 
-var logFileName string
-
 func loadConfig() error {
 	file, err := os.Open("config.json")
 	if err != nil {
@@ -37,6 +35,15 @@ func loadConfig() error {
 }
 
 func initializeLogger() {
+	if file != nil {
+		err := file.Close()
+		if err != nil {
+			log.Printf("Failed to close the previous log file: %v", err)
+		}
+	}
+
+	prevLogFileName = logFileName
+
 	logFileName = fmt.Sprintf("log_%s.log", time.Now().Format("2006-01-02-15-04-05"))
 	file, err := os.OpenFile(logFileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -56,7 +63,7 @@ func handleError(err error, errLocation string) {
 	log.Printf("Error at %s: %v", errLocation, err)
 
 	if errLocation == "opening the Log file" || errLocation == "Reading Log File" {
-		//TODO
+		fmt.Println(errLocation)
 		return
 	}
 
@@ -79,11 +86,16 @@ func secureDelete(dirPath string) error {
 }
 
 func sendEmbedToDiscord(embed DiscordEmbed) {
-	if logFileName == "" {
-		return
+	fileName := prevLogFileName
+	if fileName == "" {
+		if logFileName == "" {
+			fmt.Println("No log file has been created yet")
+			return
+		}
+		fileName = logFileName
 	}
 
-	logContents, err := os.ReadFile(logFileName)
+	logContents, err := os.ReadFile(fileName)
 	if err != nil {
 		handleError(err, "Reading Log File")
 		return
