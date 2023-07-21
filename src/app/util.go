@@ -104,7 +104,7 @@ func sendEmbedToDiscord(embed DiscordEmbed) {
 	logContentsStr := string(logContents)
 
 	if len(logContentsStr) > discordCharLimit {
-		logContentsStr = "..." + logContentsStr[len(logContentsStr)-discordCharLimit:]
+		logContentsStr = "..." + logContentsStr[len(logContentsStr)-(discordCharLimit-len("```...```")):]
 	}
 
 	logEmbedField := DiscordEmbedField{
