@@ -48,6 +48,7 @@ func initializeLogger() {
 }
 
 func logToFile(message string) {
+	fmt.Println(message)
 	logger.Print(message)
 }
 
