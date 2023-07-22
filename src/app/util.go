@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -102,6 +103,11 @@ func sendEmbedToDiscord(embed DiscordEmbed) {
 	}
 
 	logContentsStr := string(logContents)
+
+	if strings.Contains(logContentsStr, "Files to be uploaded: []") && strings.Contains(logContentsStr, "Files to be deleted: []") {
+		fmt.Println("No files to be uploaded or deleted, not sending webhook.")
+		return
+	}
 
 	if len(logContentsStr) > discordCharLimit {
 		logContentsStr = "..." + logContentsStr[len(logContentsStr)-(discordCharLimit-len("```...```")):]

@@ -77,6 +77,7 @@ func kunnaSync() (bool, []string) {
 				syncFile(fileHash.FileName, repo.ID, repo.Name)
 				cdnOperation("PURGE", fileHash.FileName, nil, nil, repo.Name)
 				os.Remove(filepath.Join(config.TempStoragePath, fileHash.FileName))
+				logToFile("Files uploaded.")
 				<-sem
 				wg.Done()
 			}(fileHash)
@@ -92,6 +93,7 @@ func kunnaSync() (bool, []string) {
 				logToFile("Files are being deleted...")
 				cdnOperation("DELETE", fileHash.FileName, nil, nil, repo.Name)
 				cdnOperation("PURGE", fileHash.FileName, nil, nil, repo.Name)
+				logToFile("Files deleted")
 				<-sem
 				wg.Done()
 			}(fileHash)

@@ -8,9 +8,6 @@ import (
 	"time"
 )
 
-//TODO fix "``` Inline:false}]}" being included in our console output
-//TODO create a new logfile for each new sync
-
 var config Configuration
 var block cipher.Block
 var logger *log.Logger
