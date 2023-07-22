@@ -93,7 +93,7 @@ func kunnaSync() (bool, []string) {
 				logToFile("Files are being deleted...")
 				cdnOperation("DELETE", fileHash.FileName, nil, nil, repo.Name)
 				cdnOperation("PURGE", fileHash.FileName, nil, nil, repo.Name)
-				logToFile("Files deleted")
+				logToFile("Files deleted.")
 				<-sem
 				wg.Done()
 			}(fileHash)
