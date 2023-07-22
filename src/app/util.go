@@ -210,8 +210,5 @@ func compareFileHashes(gitlabFileHashes, bunnyCDNFileHashes []FileHash) ([]FileH
 		}
 	}
 
-	logToFile(fmt.Sprintf("Files to be Uploaded: %v\n", filesToBeUploaded))
-	logToFile(fmt.Sprintf("Files to be Deleted: %v\n", filesToBeDeleted))
-
 	return filesToBeUploaded, filesToBeDeleted
 }
