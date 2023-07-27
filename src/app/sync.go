@@ -211,7 +211,6 @@ func cdnOperation(mode string, fileName string, data interface{}, id *int, repoN
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && fileName != "sync_config.json" && fileName != "kushn_result.json" {
 		if fileName == "kushn_result.json" || fileName == "sync_config.json" {
-			print("Failed to get kushn")
 			return nil, err
 		}
 		handleError(err, fmt.Sprintf("failed to get file: %s with error code: %s", fileName, resp.Status))
