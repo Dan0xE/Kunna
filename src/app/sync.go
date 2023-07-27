@@ -34,34 +34,53 @@ func runSync() {
 
 func kunnaSync() (bool, []string) {
 	repoNames := make([]string, 0)
+	errorMessages := make([]string, 0)
 	success := true
 
 	defer func() {
 		if r := recover(); r != nil {
 			logToFile(fmt.Sprintf("Panic occurred: %v", r))
+			errorMessages = append(errorMessages, fmt.Sprintf("Panic occurred: %v", r))
 			success = false
 		}
 	}()
 
 	repos, err := fetchGitLabRepos()
 	if err != nil {
-		handleError(err, "fetch GitLab repos")
-		logToFile(fmt.Sprintf("Failed to fetch GitLab repos: %v", err))
-		return false, repoNames
+		errorMessages = append(errorMessages, fmt.Sprintf("Error fetching GitLab repos: %v", err))
+		return false, errorMessages
 	}
 
 	syncRepos := filterGitLabReposBySyncStatus(repos)
 
 	if err != nil {
-		logToFile(fmt.Sprintf("Failed to filter GitLab repos by sync status: %v", err))
-		return false, repoNames
+		errorMessages = append(errorMessages, fmt.Sprintf("Error filtering repos by sync status: %v", err))
+		return false, errorMessages
 	}
 
 	for _, repo := range syncRepos {
 		logToFile(fmt.Sprintf("Processing repo: %s", repo.Name))
 		repoNames = append(repoNames, repo.Name)
 
-		filesToBeUploaded, filesToBeDeleted := compareFileHashes(getKushnResult("GitLab", repo), getKushnResult("BunnyCDN", repo))
+		gitlabResult, err := getKushnResult("GitLab", repo)
+
+		if err != nil {
+			errorMessages = append(errorMessages, fmt.Sprintf("Error getting GitLab result for repo: %s, error: %s", repo.Name, err.Error()))
+			continue
+		}
+
+		bunnyCDNResult, err := getKushnResult("BunnyCDN", repo)
+		if err != nil {
+			errorMessages = append(errorMessages, fmt.Sprintf("Error getting BunnyCDN result for repo: %s, error: %s", repo.Name, err.Error()))
+			continue
+		}
+
+		if gitlabResult == nil && bunnyCDNResult == nil {
+			logToFile(fmt.Sprintf("Skipping repo %s: kushn_result.json not found on both GitLab and BunnyCDN.", repo.Name))
+			continue
+		}
+
+		filesToBeUploaded, filesToBeDeleted := compareFileHashes(gitlabResult, bunnyCDNResult)
 
 		logToFile(fmt.Sprintf("Files to be uploaded: %v", filesToBeUploaded))
 		logToFile(fmt.Sprintf("Files to be deleted: %v", filesToBeDeleted))
@@ -102,6 +121,10 @@ func kunnaSync() (bool, []string) {
 		wg.Wait()
 
 		secureDelete(fmt.Sprintf("%s/%s", config.TempStoragePath, repo.Name))
+	}
+
+	if len(errorMessages) > 0 {
+		return false, errorMessages
 	}
 
 	return success, repoNames
@@ -159,8 +182,7 @@ func cdnOperation(mode string, fileName string, data interface{}, id *int, repoN
 
 	req, err := http.NewRequest(requestType, baseURL, requestData)
 	if err != nil {
-		logToFile(fmt.Sprintf("error creating %s request: %v", requestType, err))
-		handleError(err, "creating request")
+		handleError(nil, fmt.Sprintf("error creating %s request: %v", requestType, err))
 		return nil, fmt.Errorf("error creating %s request: %v", requestType, err)
 	}
 
@@ -184,12 +206,11 @@ func cdnOperation(mode string, fileName string, data interface{}, id *int, repoN
 		err := resp.Body.Close()
 		if err != nil {
 			handleError(err, " closing response body")
-			logToFile(fmt.Sprintf("error closing response body: %v", err))
 		}
 	}()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && fileName != "sync_config.json" {
-		handleError(err, "response from api on request")
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && fileName != "sync_config.json" && fileName != "kushn_result.json" {
+		handleError(err, fmt.Sprintf("failed to get file: %s with error code: %s", fileName, resp.Status))
 		logToFile(fmt.Sprintf("error response from API on %s request: %s", requestType, resp.Status))
 		return nil, fmt.Errorf("error response from API on %s request: %s", requestType, resp.Status)
 	}
@@ -198,7 +219,6 @@ func cdnOperation(mode string, fileName string, data interface{}, id *int, repoN
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			handleError(err, "reading response body")
-			logToFile(err.Error())
 			return nil, fmt.Errorf("error reading response body: %v", err)
 		}
 		return body, nil
@@ -226,6 +246,7 @@ func fetchGitLabRepos() ([]GitLabRepo, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		handleError(nil, fmt.Sprintf("error response from GitLab API on GET request: %s", resp.Status))
 		return nil, fmt.Errorf("error response from GitLab API on GET request: %s", resp.Status)
 	}
 
@@ -235,7 +256,8 @@ func fetchGitLabRepos() ([]GitLabRepo, error) {
 	}
 
 	if err := json.Unmarshal(body, &repos); err != nil {
-		return nil, fmt.Errorf("error unmarshalling GitLab repos: %v", err)
+		handleError(err, "umarshalling GitLab repos")
+		return nil, fmt.Errorf("failed to unmarshall GitLab repos")
 	}
 
 	return repos, nil
@@ -244,14 +266,19 @@ func fetchGitLabRepos() ([]GitLabRepo, error) {
 
 func fetchSyncConfigFromRepo(repo GitLabRepo) (*SyncConfig, error) {
 	configData, err := cdnOperation("GITLAB_GET", "sync_config.json", nil, &repo.ID, repo.Name)
+
 	if err != nil {
+		if err.Error() == "error response from API on GET request: 404 Not Found" {
+			logToFile(fmt.Sprintf("sync_config.json not found for repo %s, skipping sync.", repo.Name))
+			return nil, nil
+		}
 		handleError(err, "getting sync_config.json")
 		return nil, err
 	}
 
 	var config SyncConfig
 	if err := json.Unmarshal(configData, &config); err != nil {
-		handleError(err, "unmarsharling sync_config.json")
+		handleError(err, "unmarshalling sync_config.json")
 	}
 
 	return &config, nil
@@ -260,20 +287,15 @@ func fetchSyncConfigFromRepo(repo GitLabRepo) (*SyncConfig, error) {
 func filterGitLabReposBySyncStatus(repos []GitLabRepo) []GitLabRepo {
 	syncRepos := []GitLabRepo{}
 	for _, repo := range repos {
-		syncConfig, err := fetchSyncConfigFromRepo(repo)
-		if err != nil {
-			logToFile(fmt.Sprintf("error fetching sync_config.json from repo %s: %v", repo.Name, err))
-			continue
-		}
-
-		if syncConfig.Sync {
+		syncConfig, _ := fetchSyncConfigFromRepo(repo)
+		if syncConfig != nil && syncConfig.Sync {
 			syncRepos = append(syncRepos, repo)
 		}
 	}
 	return syncRepos
 }
 
-func getKushnResult(mode string, repo GitLabRepo) []FileHash {
+func getKushnResult(mode string, repo GitLabRepo) ([]FileHash, error) {
 	var fileContent []byte
 	var err error
 	if mode == "GitLab" {
@@ -281,19 +303,22 @@ func getKushnResult(mode string, repo GitLabRepo) []FileHash {
 	} else if mode == "BunnyCDN" {
 		fileContent, err = cdnOperation("GET", fmt.Sprintf("%s/kushn_result.json", repo.Name), nil, nil, repo.Name)
 	} else {
-		logToFile(fmt.Sprintf("Invalid mode: %v. Expected 'GitLab' or 'BunnyCDN'", mode))
+		return nil, fmt.Errorf("invalid mode: %v. Expected 'GitLab' or 'BunnyCDN'", mode)
 	}
 
 	if err != nil {
-		handleError(err, "cdnOperation")
-		logToFile(fmt.Sprintf("Error in cdnOperation during %s mode: %v", mode, err))
+		if err.Error() == "error response from API on GET request: 404 Not Found" {
+			logToFile(fmt.Sprintf("kushn_result.json not found in mode: %s, treating as if sync: false is set.", mode))
+			return nil, err
+		}
+
+		return nil, fmt.Errorf("Error in cdnOperation during %s mode: %v", mode, err)
 	}
 
 	var fileHashes []FileHash
 	err = json.Unmarshal(fileContent, &fileHashes)
 	if err != nil {
-		handleError(err, "unmarshalling kushn result")
-		logToFile(fmt.Sprintf("Error unmarshalling %v kushn result: %v", mode, err))
+		return nil, fmt.Errorf("Error unmarshalling %v kushn result: %v", mode, err)
 	}
-	return fileHashes
+	return fileHashes, nil
 }

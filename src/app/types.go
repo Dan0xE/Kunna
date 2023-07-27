@@ -58,3 +58,10 @@ type SyncConfig struct {
 	Type string `json:"type"`
 	Sync bool   `json:"sync"`
 }
+
+type MyError struct {
+	StatusCode    string
+	StatusCodeInt int
+	Mode          string
+	CipherLength  int
+}

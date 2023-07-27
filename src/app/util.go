@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,16 +22,14 @@ const discordCharLimit = 1024
 func loadConfig() error {
 	file, err := os.Open("config.json")
 	if err != nil {
-		handleError(err, "opening config file")
-		return err
+		log.Fatalf("Failed to read config.json: %v", err)
 	}
 	defer file.Close()
 	decoder := json.NewDecoder(file)
 	config = Configuration{}
 	err = decoder.Decode(&config)
 	if err != nil {
-		handleError(err, "Configuration Decoding")
-		return err
+		log.Fatalf("Failed to decode config.json: %v", err)
 	}
 	return nil
 }
@@ -39,7 +38,7 @@ func initializeLogger() {
 	if file != nil {
 		err := file.Close()
 		if err != nil {
-			log.Printf("Failed to close the previous log file: %v", err)
+			handleError(err, "Closing the previous log file")
 		}
 	}
 
@@ -55,13 +54,21 @@ func initializeLogger() {
 	logger = log.New(file, "", log.LstdFlags)
 }
 
+func (e *MyError) Error() string {
+	return e.StatusCode
+}
+
 func logToFile(message string) {
 	fmt.Println(message)
 	logger.Print(message)
 }
 
 func handleError(err error, errLocation string) {
-	log.Printf("Error at %s: %v", errLocation, err)
+	if err != nil {
+		log.Printf("Error at %s: %v", errLocation, err)
+	} else {
+		log.Print(errLocation)
+	}
 
 	if errLocation == "opening the Log file" || errLocation == "Reading Log File" {
 		fmt.Println(errLocation)
@@ -105,7 +112,7 @@ func sendEmbedToDiscord(embed DiscordEmbed) {
 	logContentsStr := string(logContents)
 
 	if strings.Contains(logContentsStr, "Files to be uploaded: []") && strings.Contains(logContentsStr, "Files to be deleted: []") {
-		fmt.Println("No files to be uploaded or deleted, not sending webhook.")
+		logToFile("No files to be uploaded or deleted, not sending webhook.")
 		return
 	}
 
@@ -128,40 +135,42 @@ func sendEmbedToDiscord(embed DiscordEmbed) {
 
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
-		handleError(err, "Creating Embed")
+		logToFile(fmt.Sprintf("Failed to create Embed: %v", err))
 		return
 	}
 
 	resp, err := http.Post(config.DiscordWebHook, "application/json", bytes.NewBuffer(bodyBytes))
 	if err != nil {
-		handleError(err, "Posting Webhook")
+		logToFile(fmt.Sprintf("Failed to post WebHook: %v", err))
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		log.Printf("received status code %d from Discord\n", resp.StatusCode)
+		val := strconv.Itoa(resp.StatusCode)
+		err := &MyError{StatusCode: val}
+		handleError(err, "status code received from Discord")
 		return
 	}
 
 	log.Printf("Sent embed to Discord: %+v\n", embed)
 }
 
-// We reuse the cypher because processing the files would be super SLOW otherwise
+// We reuse the cypher because processing the files would be super SLOW otherwise, but we'll make this modifiable via the config
 func processFileContent(fileContent []byte, mode string) []byte {
 	switch mode {
 	case "encrypt":
 		ciphertext := make([]byte, aes.BlockSize+len(fileContent))
 		iv := ciphertext[:aes.BlockSize]
 		if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-			logToFile(fmt.Sprintf("Error creating cipher: %v", err))
+			handleError(err, "creating cipher")
 		}
 		stream := cipher.NewCFBEncrypter(block, iv)
 		stream.XORKeyStream(ciphertext[aes.BlockSize:], fileContent)
 		return ciphertext
 	case "decrypt":
 		if len(fileContent) < aes.BlockSize {
-			logToFile("Ciphertext too short")
+			handleError(&MyError{CipherLength: len(fileContent)}, "recieved. This Ciphertext is too short!")
 		}
 		iv := fileContent[:aes.BlockSize]
 		fileContent = fileContent[aes.BlockSize:]
@@ -169,7 +178,7 @@ func processFileContent(fileContent []byte, mode string) []byte {
 		stream.XORKeyStream(fileContent, fileContent)
 		return fileContent
 	default:
-		logToFile(fmt.Sprintf("Invalid mode: %v. Expected 'encrypt' or 'decrypt'", mode))
+		handleError(&MyError{Mode: mode}, "recieved but this is an Invalid mode. Expected 'encrypt' or 'decrypt'")
 		return nil
 	}
 }
@@ -179,7 +188,6 @@ func saveToTempStorage(fileName string, content []byte, repoName string) string 
 		err := os.MkdirAll(fmt.Sprintf("%s/%s", config.TempStoragePath, repoName), 0755) // rwxr-xr-x permissions
 		if err != nil {
 			handleError(err, "creating directory")
-			logToFile(fmt.Sprintf("Error creating directory: %v", err))
 		}
 	}
 
@@ -187,7 +195,6 @@ func saveToTempStorage(fileName string, content []byte, repoName string) string 
 	err := os.WriteFile(tempFilePath, content, 0600) // rw------- file permissions
 	if err != nil {
 		handleError(err, "writing to temp file")
-		logToFile(fmt.Sprintf("Error writing to temp file: %v", err))
 	}
 	return tempFilePath
 }
