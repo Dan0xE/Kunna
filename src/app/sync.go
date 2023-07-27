@@ -210,6 +210,10 @@ func cdnOperation(mode string, fileName string, data interface{}, id *int, repoN
 	}()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && fileName != "sync_config.json" && fileName != "kushn_result.json" {
+		if fileName == "kushn_result.json" || fileName == "sync_config.json" {
+			print("Failed to get kushn")
+			return nil, err
+		}
 		handleError(err, fmt.Sprintf("failed to get file: %s with error code: %s", fileName, resp.Status))
 		logToFile(fmt.Sprintf("error response from API on %s request: %s", requestType, resp.Status))
 		return nil, fmt.Errorf("error response from API on %s request: %s", requestType, resp.Status)
@@ -307,18 +311,28 @@ func getKushnResult(mode string, repo GitLabRepo) ([]FileHash, error) {
 	}
 
 	if err != nil {
-		if err.Error() == "error response from API on GET request: 404 Not Found" {
-			logToFile(fmt.Sprintf("kushn_result.json not found in mode: %s, treating as if sync: false is set.", mode))
-			return nil, err
-		}
+		return nil, err
+	}
 
-		return nil, fmt.Errorf("Error in cdnOperation during %s mode: %v", mode, err)
+	var response struct {
+		Message string `json:"message"`
+	}
+	//GitLab doesnt seem to return a direct 404 http error, so we have to do that
+	err = json.Unmarshal(fileContent, &response)
+	if err == nil && response.Message == "404 File Not Found" {
+		logToFile(fmt.Sprintf("kushn_result.json not found in mode: %s, treating as if sync: false is set.", mode))
+		return nil, nil
 	}
 
 	var fileHashes []FileHash
-	err = json.Unmarshal(fileContent, &fileHashes)
-	if err != nil {
-		return nil, fmt.Errorf("Error unmarshalling %v kushn result: %v", mode, err)
+	if json.Valid(fileContent) {
+		err = json.Unmarshal(fileContent, &fileHashes)
+		if err != nil {
+			return nil, fmt.Errorf("Error unmarshalling %v kushn result: %v", mode, err)
+		}
+	} else {
+		return nil, fmt.Errorf("invalid JSON received in %v mode", mode)
 	}
+
 	return fileHashes, nil
 }
